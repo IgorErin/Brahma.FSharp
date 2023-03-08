@@ -112,9 +112,9 @@ let loopTests context = [
     testCase "While. Test 3. Do inside body of while loop" <| fun _ ->
         let gpuMapInplace f (xs: int clarray ref) =
             opencl {
-                let! res = gpuMap f !xs
-                do! ClArray.close !xs
-                xs := res
+                let! res = gpuMap f xs.Value
+                do! ClArray.close xs.Value
+                xs.Value <- res
             }
 
         let workflow =

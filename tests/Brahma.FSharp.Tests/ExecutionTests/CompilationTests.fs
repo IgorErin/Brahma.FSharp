@@ -67,27 +67,30 @@ let unionTests context =
     let testGen testCase name outFile expectedFile command =
         testCase name <| fun () -> checkCode context command outFile expectedFile
 
+    let device = context.ClContext.ClDevice
+
     let newUnionTestList =
         [
-            testGen
-                testCase
-                "Test 1: TranslateTest.A"
-                "Union.Compile.Test1.gen"
-                "Union.Compile.Test1.cl"
-                <@ fun (range: Range1D) ->
-                    let x = A(5, 6.0)
-                    let mutable y = 5
-                    y <- 7 @>
+            if Utils.isDeviceCompatibleTest device then
+                testGen
+                    testCase
+                    "Test 1: TranslateTest.A"
+                    "Union.Compile.Test1.gen"
+                    "Union.Compile.Test1.cl"
+                    <@ fun (range: Range1D) ->
+                        let x = A(5, 6.0)
+                        let mutable y = 5
+                        y <- 7 @>
 
-            testGen
-                  testCase
-                  "Test 2: TranslateTest.B"
-                  "Union.Compile.Test2.gen"
-                  "Union.Compile.Test2.cl"
-                  <@ fun (range: Range1D) ->
-                      let x = B(5.0)
-                      let mutable y = 5
-                      y <- 7 @>
+                testGen
+                      testCase
+                      "Test 2: TranslateTest.B"
+                      "Union.Compile.Test2.gen"
+                      "Union.Compile.Test2.cl"
+                      <@ fun (range: Range1D) ->
+                          let x = B(5.0)
+                          let mutable y = 5
+                          y <- 7 @>
 
             testGen
                   testCase

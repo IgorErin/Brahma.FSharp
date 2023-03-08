@@ -13,18 +13,21 @@ module Helpers =
     let default1D = Range1D(defaultInArrayLength, 1)
     let default2D = Range2D(defaultInArrayLength, 1)
 
-    let checkResult context command (inArr: 'a[]) (expectedArr: 'a[]) =
-        let actual =
-            opencl {
-                use! inBuf = ClArray.toDevice inArr
-                do! runCommand command <| fun x ->
-                    x default1D inBuf
+    let checkResult (context: RuntimeContext) command (inArr: 'a[]) (expectedArr: 'a[]) =
+        let device = context.ClContext.ClDevice
 
-                return! ClArray.toHost inBuf
-            }
-            |> ClTask.runSync context
+        if Utils.isDeviceCompatibleTest<'a> device then
+            let actual =
+                opencl {
+                    use! inBuf = ClArray.toDevice inArr
+                    do! runCommand command <| fun x ->
+                        x default1D inBuf
 
-        Expect.sequenceEqual actual expectedArr $"For context: %A{context}. Arrays should be equals"
+                    return! ClArray.toHost inBuf
+                }
+                |> ClTask.runSync context
+
+            Expect.sequenceEqual actual expectedArr $"For context: %A{context}. Arrays should be equals"
 
 let logger = Log.create "FullTests"
 

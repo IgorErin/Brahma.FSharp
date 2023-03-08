@@ -103,8 +103,10 @@ let stressTest<'a when 'a : equality and 'a : struct> context (f: Expr<'a -> 'a>
     "Results should be equal"
     |> Expect.isTrue (isEqual actual expected)
 
-let stressTestCases context = [
+let stressTestCases (context: RuntimeContext) = [
     let range = [1 .. 10 .. 100]
+
+    let device = context.ClContext.ClDevice
 
     // int
     yield! range |> List.map (fun size ->
@@ -119,14 +121,15 @@ let stressTestCases context = [
     // float32
     yield! range |> List.map (fun size ->
         testCase $"Smoke stress test (size %i{size}) on atomic 'inc' on float32" <| fun () ->
-            stressTest<float32> context <@ fun x -> x + 1.f @> size (fun x -> x + 1.f) (fun x y -> float (abs (x - y)) < Accuracy.low.relative)
+            stressTest<float32> context <@ fun x -> x + 1.f @> size (fun x -> x + 1.f) Utils.float32IsEqual
     )
 
     // double
-    yield! range |> List.map (fun size ->
-        testCase $"Smoke stress test (size %i{size}) on atomic 'inc' on float" <| fun () ->
-            stressTest<float> context <@ fun x -> x + 1. @> size (fun x -> x + 1.) (fun x y -> abs (x - y) < Accuracy.low.relative)
-    )
+    if Utils.isDoubleCompatible device then
+        yield! range |> List.map (fun size ->
+            testCase $"Smoke stress test (size %i{size}) on atomic 'inc' on float" <| fun () ->
+                stressTest<float> context <@ fun x -> x + 1. @> size (fun x -> x + 1.) Utils.floatIsEqual
+        )
 
     // bool
     yield! range |> List.map (fun size ->
@@ -152,61 +155,64 @@ let stressTestCases context = [
 /// Test for add and sub like atomic operations.
 /// Use local and global atomics,
 /// use reading from global mem in local atomic
-let foldTest<'a when 'a : equality and 'a : struct> context f (isEqual: 'a -> 'a -> bool) =
+let foldTest<'a when 'a : equality and 'a : struct> (context: RuntimeContext) f (isEqual: 'a -> 'a -> bool) =
     let (.=.) left right = isEqual left right |@ $"%A{left} = %A{right}"
 
-    Check.One(Settings.fscheckConfig, fun (array: 'a[]) ->
-        let arrayLength = array.Length
-        let kernel zero =
-            <@
-                fun (range: Range1D) (array: 'a clarray) (result: 'a clcell) ->
-                    let lid = range.LocalID0
-                    let gid = range.GlobalID0
+    let device = context.ClContext.ClDevice
 
-                    let localResult = localArray<'a> 1
-                    if lid = 0 then
-                        localResult.[0] <- zero
+    if Utils.isDeviceCompatibleTest<'a> device then
+        Check.One(Settings.fscheckConfig, fun (array: 'a[]) ->
+            let arrayLength = array.Length
+            let kernel zero =
+                <@
+                    fun (range: Range1D) (array: 'a clarray) (result: 'a clcell) ->
+                        let lid = range.LocalID0
+                        let gid = range.GlobalID0
 
-                    barrierLocal ()
+                        let localResult = localArray<'a> 1
+                        if lid = 0 then
+                            localResult.[0] <- zero
 
-                    if gid < arrayLength then
-                        atomic %f localResult.[0] array.[gid] |> ignore
+                        barrierLocal ()
 
-                    if lid = 0 then
-                        atomic %f result.Value localResult.[0] |> ignore
-            @>
+                        if gid < arrayLength then
+                            atomic %f localResult.[0] array.[gid] |> ignore
 
-        let expected () =
-            array
-            |> Array.fold (fun state x -> f.Evaluate() state x) Unchecked.defaultof<'a>
+                        if lid = 0 then
+                            atomic %f result.Value localResult.[0] |> ignore
+                @>
 
-        let actual () =
-            opencl {
-                use! result = ClCell.alloc<'a> ()
-                use! array = ClArray.toDevice array
-                do! runCommand (kernel Unchecked.defaultof<'a>) <| fun kernelPrepare ->
-                    kernelPrepare
-                    <| Range1D.CreateValid(array.Length, Settings.wgSize)
-                    <| array
-                    <| result
+            let expected () =
+                array
+                |> Array.fold (fun state x -> f.Evaluate() state x) Unchecked.defaultof<'a>
 
-                return! ClCell.toHost result
-            }
-            |> ClTask.runSync context
+            let actual () =
+                opencl {
+                    use! result = ClCell.alloc<'a> ()
+                    use! array = ClArray.toDevice array
+                    do! runCommand (kernel Unchecked.defaultof<'a>) <| fun kernelPrepare ->
+                        kernelPrepare
+                        <| Range1D.CreateValid(array.Length, Settings.wgSize)
+                        <| array
+                        <| result
 
-        array.Length <> 0
-        ==> lazy (actual () .=. expected ())
-    )
+                    return! ClCell.toHost result
+                }
+                |> ClTask.runSync context
+
+            array.Length <> 0
+            ==> lazy (actual () .=. expected ())
+        )
 
 let foldTestCases context = [
     // int, smoke tests
     testCase "Smoke fold test atomic 'add' on int" <| fun () -> foldTest<int> context <@ (+) @> (=)
 
     // float
-    testCase "Fold test atomic 'add' on float32" <| fun () -> foldTest<float32> context <@ (+) @> (fun x y -> float (abs (x - y)) < Accuracy.low.relative)
+    testCase "Fold test atomic 'add' on float32" <| fun () -> foldTest<float32> context <@ (+) @> Utils.float32IsEqual
 
     // double
-    testCase "Fold test atomic 'add' on float" <| fun () -> foldTest<float> context <@ (+) @> (fun x y -> abs (x - y) < Accuracy.low.relative)
+    testCase "Fold test atomic 'add' on float" <| fun () -> foldTest<float> context <@ (+) @> Utils.floatIsEqual
 
     // bool
     ptestCase "Fold test atomic '&&' on bool" <| fun () -> foldTest<bool> context <@ (&&) @> (=)
@@ -232,36 +238,39 @@ let foldTestCases context = [
     ptestCase "Fold test atomic 'add' on WrappedInt" <| fun () -> foldTest<WrappedInt> context <@ (+) @> (=)
 ]
 
-let xchgTest<'a when 'a : equality and 'a : struct> context cmp value =
-    let localSize = Settings.wgSize
-    let kernel =
-        <@
-            fun (range: Range1D) (array: 'a clarray) ->
-                let gid = range.GlobalID0
+let xchgTest<'a when 'a : equality and 'a : struct> (context: RuntimeContext) cmp value =
+    let device = context.ClContext.ClDevice
 
-                let localBuffer = localArray<'a> localSize
-                atomic xchg localBuffer.[gid] array.[gid] |> ignore
-                atomic cmpxchg array.[gid] cmp localBuffer.[localSize - gid] |> ignore
-        @>
+    if Utils.isDeviceCompatibleTest device then
+        let localSize = Settings.wgSize
+        let kernel =
+            <@
+                fun (range: Range1D) (array: 'a clarray) ->
+                    let gid = range.GlobalID0
 
-    let expected = Array.create<'a> localSize value
+                    let localBuffer = localArray<'a> localSize
+                    atomic xchg localBuffer.[gid] array.[gid] |> ignore
+                    atomic cmpxchg array.[gid] cmp localBuffer.[localSize - gid] |> ignore
+            @>
 
-    let actual =
-        opencl {
-            use! buffer = ClArray.toDevice [| for i = 0 to localSize - 1 do if i < localSize / 2 then cmp else value |]
-            do! runCommand kernel <| fun kernelPrepare ->
-                kernelPrepare
-                <| Range1D(localSize, localSize)
-                <| buffer
+        let expected = Array.create<'a> localSize value
 
-            return! ClArray.toHost buffer
-        }
-        |> ClTask.runSync context
+        let actual =
+            opencl {
+                use! buffer = ClArray.toDevice [| for i = 0 to localSize - 1 do if i < localSize / 2 then cmp else value |]
+                do! runCommand kernel <| fun kernelPrepare ->
+                    kernelPrepare
+                    <| Range1D(localSize, localSize)
+                    <| buffer
 
-    "Results should be equal"
-    |> Expect.sequenceEqual actual expected
+                return! ClArray.toHost buffer
+            }
+            |> ClTask.runSync context
 
-let xchgTestCases context = [
+        "Results should be equal"
+        |> Expect.sequenceEqual actual expected
+
+let xchgTestCases (context: RuntimeContext) = [
     testCase "Xchg test on int" <| fun () -> xchgTest<int> context 0 256
     testCase "Xchg test on float" <| fun () -> xchgTest<float> context 0. 256.
     testCase "Xchg test on bool" <| fun () -> xchgTest<bool> context false true

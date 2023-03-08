@@ -10,25 +10,28 @@ open Brahma.FSharp
 
 [<AutoOpen>]
 module Helpers =
-    let check<'a when 'a : equality> context (data: 'a[]) (command: int -> Expr<Range1D -> ClArray<'a> -> unit>) =
-        let length = data.Length
+    let check<'a when 'a : equality> (context: RuntimeContext) (data: 'a[]) (command: int -> Expr<Range1D -> ClArray<'a> -> unit>) =
+        let device = context.ClContext.ClDevice
 
-        let expected = data
+        if Utils.isDeviceCompatibleTest<'a> device then
+            let length = data.Length
 
-        let actual =
-            opencl {
-                use! buffer = ClArray.toDevice data
-                do! runCommand (command length) <| fun it ->
-                    it
-                    <| Range1D.CreateValid(data.Length, 256)
-                    <| buffer
+            let expected = data
 
-                return! ClArray.toHost buffer
-            }
-            |> ClTask.runSync context
+            let actual =
+                opencl {
+                    use! buffer = ClArray.toDevice data
+                    do! runCommand (command length) <| fun it ->
+                        it
+                        <| Range1D.CreateValid(data.Length, 256)
+                        <| buffer
 
-        "Arrays should be equal"
-        |> Expect.sequenceEqual actual expected
+                    return! ClArray.toHost buffer
+                }
+                |> ClTask.runSync context
+
+            "Arrays should be equal"
+            |> Expect.sequenceEqual actual expected
 
     let message typeName = $"Simple test on `%s{typeName}`"
 

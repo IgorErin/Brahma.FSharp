@@ -19,6 +19,7 @@
     <Content Include="ExecutionTests\Expected\*">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
+    <Compile Include="ExecutionTests\Utils.fs" />
     <Compile Include="ExecutionTests\RuntimeTests.fs" />
     <Compile Include="ExecutionTests\CompilationTests.fs" />
     <Compile Include="ExecutionTests\WorkflowBuilderTests.fs" />
