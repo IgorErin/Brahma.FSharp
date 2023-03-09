@@ -71,7 +71,7 @@ let unionTests context =
 
     let newUnionTestList =
         [
-            if Utils.isDeviceCompatibleTest device then
+            if Utils.isDoubleCompatible device then
                 testGen
                     testCase
                     "Test 1: TranslateTest.A"
